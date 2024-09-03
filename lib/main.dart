@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:tflite_v2/tflite_v2.dart';
+import 'package:image/image.dart' as img;
 
 void main() {
   runApp(MyApp());
@@ -25,33 +26,41 @@ class ImagePickerDemo extends StatefulWidget {
 class _ImagePickerDemoState extends State<ImagePickerDemo> {
   final ImagePicker _picker = ImagePicker();
   XFile? _image;
-  File? file;
-  var _recognitions;
-  var result = "";
-  // var dataList = [];
+  String result = "";
+  String probability1 = "";
+  String probability2 = "";
+
   @override
   void initState() {
     super.initState();
-    loadmodel().then((value) {
+    loadModel().then((value) {
       setState(() {});
     });
   }
 
-  loadmodel() async {
-    await Tflite.loadModel(
-      model: "assets/model_unquant.tflite",
-      labels: "assets/labels.txt",
-    );
+  Future<void> loadModel() async {
+    try {
+      await Tflite.loadModel(
+        model: "assets/dating_model.tflite",
+        labels: "assets/labels.txt",
+      );
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error loading model: $e');
+      }
+    }
   }
 
   Future<void> _pickImage() async {
     try {
       final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
+      if (image == null) return; // User canceled the picker
+
       setState(() {
         _image = image;
-        file = File(image!.path);
       });
-      detectimage(file!);
+
+      detectImage(File(_image!.path));
     } catch (e) {
       if (kDebugMode) {
         print('Error picking image: $e');
@@ -59,62 +68,113 @@ class _ImagePickerDemoState extends State<ImagePickerDemo> {
     }
   }
 
-  Future detectimage(File image) async {
-    var recognitions = await Tflite.runModelOnImage(
-        path: image.path,
+  Future<void> detectImage(File image) async {
+    try {
+      // Read the image and resize it
+      img.Image? decodedImage = img.decodeImage(image.readAsBytesSync());
+      if (decodedImage == null) {
+        throw Exception('Failed to decode image');
+      }
+
+      img.Image resizedImage =
+          img.copyResize(decodedImage, width: 180, height: 180);
+
+      // Convert the resized image to Uint8List
+      var resizedImageBytes = img.encodeJpg(resizedImage);
+      if (resizedImageBytes is! Uint8List) {
+        resizedImageBytes = Uint8List.fromList(resizedImageBytes);
+      }
+
+      // Save the resized image to a temporary file to pass to TFLite
+      final tempDir = Directory.systemTemp;
+      final tempFile = File('${tempDir.path}/resized_image.jpg');
+      await tempFile.writeAsBytes(resizedImageBytes);
+
+      var recognitions = await Tflite.runModelOnImage(
+        path: tempFile.path,
         imageMean: 0.0,
         imageStd: 255.0,
         numResults: 2,
-        threshold: 0.2,
-        asynch: true);
-    setState(() {
-      _recognitions = recognitions;
-      result = recognitions![0]['label'].toString();
-    });
+        threshold: 0.0, // Setting threshold to 0.0 to get all results
+        asynch: true,
+      );
+
+      setState(() {
+        if (recognitions != null && recognitions.isNotEmpty) {
+          result = recognitions[0]['label'].toString();
+          probability1 =
+              'Probability 1: ${recognitions[0]['confidence'].toStringAsFixed(2)}';
+          probability2 =
+              'Probability 2: ${recognitions[1]['confidence'].toStringAsFixed(2)}';
+        } else {
+          result = 'No result';
+          probability1 = '';
+          probability2 = '';
+        }
+      });
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error running model: $e');
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Cat Dog Classifier'),
+        title: Text('Image Classification'),
         backgroundColor: Colors.green.shade300,
-        foregroundColor: Colors.white,
       ),
-      body: Center(
-        child: Column(
-          children: <Widget>[
-            SizedBox(
-              height: 200,
-            ),
-            if (_image != null)
-              Container(
+      body: SingleChildScrollView(
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: <Widget>[
+              SizedBox(height: 20),
+              if (_image != null)
+                Container(
                   padding: const EdgeInsets.all(20),
                   child: Image.file(
                     File(_image!.path),
                     height: 200,
                     width: 200,
                     fit: BoxFit.cover,
-                  ))
-            else
-              Container(
-                child: Text('No image selected'),
-                height: 200,
+                  ),
+                )
+              else
+                Container(
+                  height: 200,
+                  child: Center(child: Text('No image selected')),
+                ),
+              SizedBox(height: 20),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green.shade500,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: _pickImage,
+                child: Text('Pick Image from Gallery'),
               ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green.shade500,
-                foregroundColor: Colors.white,
+              SizedBox(height: 20),
+              Text(
+                'Prediction: $result',
+                style: TextStyle(fontSize: 20),
               ),
-              onPressed: _pickImage,
-              child: Text('Pick Image from Gallery'),
-            ),
-            SizedBox(height: 20),
-            Text(
-              result,
-              style: TextStyle(fontSize: 20),
-            ),
-          ],
+              if (probability1.isNotEmpty && probability2.isNotEmpty) ...[
+                SizedBox(height: 10),
+                Text(
+                  probability1,
+                  style: TextStyle(fontSize: 18),
+                ),
+                SizedBox(height: 5),
+                Text(
+                  probability2,
+                  style: TextStyle(fontSize: 18),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );
