@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -93,19 +94,29 @@ class _ImagePickerDemoState extends State<ImagePickerDemo> {
       var recognitions = await Tflite.runModelOnImage(
         path: tempFile.path,
         imageMean: 0.0,
-        imageStd: 255.0,
+        imageStd: 1.0,
         numResults: 2,
-        threshold: 0.0, // Setting threshold to 0.0 to get all results
+        threshold: -10.0, // Setting threshold to 0.0 to get all results
         asynch: true,
       );
 
+      print(recognitions);
       setState(() {
         if (recognitions != null && recognitions.isNotEmpty) {
           result = recognitions[0]['label'].toString();
+          double prediction0 = recognitions[0]['confidence'];
+          double prediction1 = recognitions[1]['confidence'];
+
+          // Determine the class based on the predictions
+          if (result == 'Vulgar' && prediction1 < 0) {
+            result = 'Vulgar';
+          } else {
+            result = 'Safe';
+          }
+
           probability1 =
-              'Probability 1: ${recognitions[0]['confidence'].toStringAsFixed(2)}';
-          probability2 =
-              'Probability 2: ${recognitions[1]['confidence'].toStringAsFixed(2)}';
+              'Probability Vulgar: ${prediction0.toStringAsFixed(2)}';
+          probability2 = 'Probability Safe: ${prediction1.toStringAsFixed(2)}';
         } else {
           result = 'No result';
           probability1 = '';
